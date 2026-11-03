@@ -1,6 +1,6 @@
 plugins {
-    kotlin("multiplatform") version "2.0.21"
-    kotlin("plugin.serialization") version "2.0.21"
+    kotlin("multiplatform") version "2.4.20"
+    kotlin("plugin.serialization") version "2.4.20"
 }
 
 group = "com.mindoo.db"
@@ -15,12 +15,16 @@ val coroutinesVersion = "1.9.0"
 val serializationVersion = "1.7.3"
 
 kotlin {
-    jvmToolchain(21)
-
-    jvm()
+    // Any JDK from 21 on builds this; the bytecode and API level stay at Java 21.
+    jvm {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+            freeCompilerArgs.add("-Xjdk-release=21")
+        }
+    }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$serializationVersion")
@@ -28,17 +32,17 @@ kotlin {
                 implementation("io.ktor:ktor-client-websockets:$ktorVersion")
             }
         }
-        val commonTest by getting {
+        commonTest {
             dependencies {
                 implementation(kotlin("test"))
             }
         }
-        val jvmMain by getting {
+        jvmMain {
             dependencies {
                 implementation("io.ktor:ktor-client-cio:$ktorVersion")
             }
         }
-        val jvmTest by getting {
+        jvmTest {
             dependencies {
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
