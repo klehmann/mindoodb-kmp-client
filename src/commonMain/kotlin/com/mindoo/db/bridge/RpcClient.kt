@@ -120,11 +120,13 @@ class RpcClient(
     fun eventPayloads(subscriptionId: String, event: String): Flow<JsonElement> =
         events(subscriptionId).filter { it.event == event }.map { it.payload }
 
-    suspend fun registerReadStream(streamId: Int): ReadStreamSink {
-        val sink = ReadStreamSink()
-        streamMutex.withLock { readSinks[streamId] = sink }
-        return sink
-    }
+    /**
+     * The sink for a read stream. The sidecar starts sending as soon as the
+     * stream is open, so chunks can arrive before the `openReadStream` reply;
+     * they are buffered in a sink created on first sight and handed out here.
+     */
+    suspend fun registerReadStream(streamId: Int): ReadStreamSink =
+        streamMutex.withLock { readSinks.getOrPut(streamId) { ReadStreamSink() } }
 
     suspend fun unregisterReadStream(streamId: Int) {
         streamMutex.withLock { readSinks.remove(streamId) }
@@ -182,21 +184,21 @@ class RpcClient(
             }
             "stream-end" -> {
                 val streamId = obj["streamId"]?.jsonPrimitive?.int ?: return
-                streamMutex.withLock { readSinks[streamId] }?.onEnd()
+                streamMutex.withLock { readSinks.getOrPut(streamId) { ReadStreamSink() } }.onEnd()
             }
             "stream-error" -> {
                 val streamId = obj["streamId"]?.jsonPrimitive?.int ?: return
                 val error = obj["error"]?.jsonObject
                 val code = ErrorCode.fromWire(error?.get("code")?.jsonPrimitive?.contentOrNull)
                 val msg = error?.get("message")?.jsonPrimitive?.contentOrNull ?: "stream error"
-                streamMutex.withLock { readSinks[streamId] }?.onError(BridgeException(code, msg))
+                streamMutex.withLock { readSinks.getOrPut(streamId) { ReadStreamSink() } }.onError(BridgeException(code, msg))
             }
         }
     }
 
     private suspend fun handleBinary(bytes: ByteArray) {
         val chunk = decodeBinaryChunk(bytes) ?: return
-        streamMutex.withLock { readSinks[chunk.streamId] }?.onChunk(chunk.payload)
+        streamMutex.withLock { readSinks.getOrPut(chunk.streamId) { ReadStreamSink() } }.onChunk(chunk.payload)
     }
 
     private suspend fun failAllPending(cause: Throwable) {

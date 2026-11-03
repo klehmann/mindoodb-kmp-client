@@ -112,18 +112,40 @@ Everything is `suspend` or `Flow`-based and carries the per-session token
 automatically.
 
 ### Session — `MindooDBSession`
-`database(id)`, `listDatabases()`, `refresh(dbId?)`, `awaitIndexReady(dbId?)`,
+`database(id)`, `listDatabases()`, `refresh(dbId?, direction)`, `awaitIndexReady(dbId?)`,
 `close()`.
 
-### Documents — `db.documents` (`DocumentApi`)
-`get`, `list(idPrefix?)`, `headCursor()`, `create(initialValues?, id?)`,
-`createMany`, `update(docId, baseHeads?) { … }`, `delete`, `undelete`,
-`history`, `getAtRevision(docId, timestamp)`.
+`refresh` syncs now (`SyncDirection.Both`/`Pull`/`Push`) and returns per-database
+counters (`pulledEntries`, `pushedEntries`, `rejectedEntries`). Without it a
+background loop syncs every 5 s once a server URL is set. Sync always covers
+`directory` and `userdirectory` (grants, key wraps) plus every open local
+database, documents and attachments.
 
-`update` takes an ops block (`set` / `unset` / `merge` / `setText`) and returns
-`UpdateResult(heads, conflictExpected?)`. Pass the document's prior `heads` as
-`baseHeads` for optimistic concurrency; MindooDB always CRDT-merges, and
-`conflictExpected` flags that concurrent changes were merged in.
+### Documents — `db.documents` (`DocumentApi`)
+`get`, `list(idPrefix?)`, `headCursor()`,
+`create(initialValues?, id?, idPrefix?, decryptionKeyId?)`, `createMany`,
+`update(docId, baseHeads?) { … }`, `delete`, `deleteMany`, `listDeleted`,
+`undelete`, `history`, `getAtRevision(docId, timestamp)`.
+
+`update` takes an ops block (`set` / `setAtomic` / `setText` / `unset` / `merge` /
+`textSplice` / `increment` / `listInsert` / `listDelete`), applied as one change,
+and returns `UpdateResult(heads, conflictExpected?)`. Pass the document's prior
+`heads` as `baseHeads`: the change is made against that version and merged into
+the current one, and `conflictExpected` flags that the document had moved on.
+
+A plain string is collaborative text (concurrent edits merge character-wise).
+For IDs, status and enum values use `setAtomic` or `MindooValue.atomic(...)`;
+`MindooValue.counter(n)` with `increment(...)` gives a counter whose concurrent
+increments add up; `MindooValue.timestamp(ms)` stores a date.
+
+```kotlin
+db.documents.update(doc.id, baseHeads = doc.heads) {
+    setAtomic("status", "open")
+    set("views", MindooValue.counter(0))
+    setText("body", "Collaborative text")
+}
+db.documents.update(doc.id) { increment("views") }
+```
 
 ### Query, views, full-text — `db`
 - `query(mindooQuery { … })` → `QueryResult`
@@ -149,13 +171,15 @@ val view = viewDefinition {
     category("category", expression = field("category"))
     column("title")
 }
-val nav = db.openViewNavigator(view)
-val rows = nav.readForward(limit = 100)   // also: gotoFirst/Next/Parent…, expandAll, expandToLevel, changes()
+val nav = db.openViewNavigator(view, navigatorOptions = navigatorOptions(expandAll = true))
+val rows = nav.readForward(limit = 100)   // also: gotoFirst/Next/Parent/Pos…, expand…, select…, readSelected
+nav.changes().collect { nav.readForward() } // view follows the database while collected
+nav.refresh()                               // or update it on demand
 nav.close()
 ```
 
 ### Attachments — `db.attachments` (`AttachmentApi`)
-`list`, `remove`, `read(docId, fileName)` → `Flow<ByteArray>`,
+`list`, `remove` / `removeById`, `read(docId, fileName)` / `readById` → `Flow<ByteArray>`,
 `upload(docId, fileName, mimeType, chunks: Flow<ByteArray>)`,
 `uploadBytes(...)`. Transfers use credit-based flow control in both directions.
 
@@ -189,20 +213,22 @@ session.listKeys()
 // Open another DB (local replica, or remote-primary via ClientNetwork store)
 session.openDatabase("tasks", DatabaseMode.Local)
 
-// Publish to a MindooDB sync server (needs *server* system-admin credentials)
+// Publish to a MindooDB sync server. Pushes directory + userdirectory as the
+// tenant admin and starts background sync. System-admin credentials are only
+// needed when the server does not let any signed user register tenants.
+session.publishToServer(url, adminPassword = "admin-pw")
 // session.publishToServer(url, systemAdminIdentity, systemAdminPassword, adminPassword = "admin-pw")
-// session.refresh()
+session.refresh()
 
-// Join flow
+// Join flow (the approval pushes the grant when the session has a server URL)
 val bob = MindooDBBridge.createUser(sidecar.endpoint, "cn=bob/o=acme", "bob-pw")
-val req = MindooDBBridge.createJoinRequest(sidecar.endpoint, bob.identity)
+val req = MindooDBBridge.createJoinRequest(sidecar.endpoint, bob.identity, label = "Billing service")
 val approved = session.approveJoinRequest(
-    req.joinRequest, adminPassword = "admin-pw", sharePassword = "share",
-    adminIdentity = created.adminIdentity,
+    req.joinRequest, adminPassword = "admin-pw", adminIdentity = created.adminIdentity,
 )
 val joined = MindooDBBridge.joinTenant(
-    sidecar.endpoint, approved.joinResponse, bob.identity, "bob-pw", "share",
-    databases = listOf("notes"),
+    sidecar.endpoint, approved.joinResponse, bob.identity, "bob-pw",
+    databases = listOf("notes"),   // pulls the directory from the server first
 )
 ```
 
@@ -233,6 +259,12 @@ isolated users, and exercises read/write, cross-session isolation, an attachment
 round-trip, the changefeed, and history. It skips gracefully if the sidecar
 `dist/` or `node` is unavailable.
 
+`ServerSyncIntegrationTest` syncs two users of one tenant through a real MindooDB
+server (publish, join, documents, attachments, typed values, a live view). It
+runs when `MINDOODB_TEST_SERVER_URL` is set; the server must let any signed user
+register tenants (setup in the sidecar README, "Tests").
+
 ```bash
 ./gradlew jvmTest
+MINDOODB_TEST_SERVER_URL=http://127.0.0.1:1761 ./gradlew jvmTest
 ```

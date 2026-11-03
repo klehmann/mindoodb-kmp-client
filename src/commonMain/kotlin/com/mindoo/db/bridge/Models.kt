@@ -59,6 +59,8 @@ data class JoinedTenant(
 data class ApproveJoinResult(
     val format: String,
     val joinResponse: JsonElement,
+    /** The directory push that puts the grant on the server (empty without a serverUrl). */
+    val pushed: List<DatabaseSyncResult> = emptyList(),
 )
 
 enum class DatabaseMode(val wire: String) {
@@ -169,11 +171,36 @@ data class DocumentChange(
     val cursor: JsonElement? = null,
 )
 
+/** Sync counters for one database (entries of the docs and attachments stores). */
+@Serializable
+data class DatabaseSyncResult(
+    val dbId: String,
+    val pulledEntries: Int = 0,
+    val pushedEntries: Int = 0,
+    val pushedBytes: Long = 0,
+    /** Entries the server refused (e.g. writes the user is not allowed to make). */
+    val rejectedEntries: Int = 0,
+)
+
 /** Result of a `session.refresh`. */
 @Serializable
 data class RefreshResult(
     val pulled: Boolean = false,
     val reconciled: Boolean = false,
+    val pushed: Boolean = false,
+    val databases: List<DatabaseSyncResult> = emptyList(),
+)
+
+/** Which way [MindooDBSession.refresh] syncs. */
+enum class SyncDirection(val wire: String) { Both("both"), Pull("pull"), Push("push") }
+
+/** Result of [MindooDBSession.publishToServer]. */
+@Serializable
+data class PublishResult(
+    val ok: Boolean = true,
+    val serverUrl: String,
+    /** The bootstrap push of `directory` and `userdirectory`. */
+    val pushed: List<DatabaseSyncResult> = emptyList(),
 )
 
 @Serializable

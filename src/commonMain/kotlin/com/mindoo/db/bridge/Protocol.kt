@@ -40,6 +40,8 @@ object Methods {
     const val DOC_CREATE_MANY = "documents.createMany"
     const val DOC_UPDATE = "documents.update"
     const val DOC_DELETE = "documents.delete"
+    const val DOC_DELETE_MANY = "documents.deleteMany"
+    const val DOC_LIST_DELETED = "documents.listDeleted"
     const val DOC_UNDELETE = "documents.undelete"
     const val DOC_LIST_HISTORY = "documents.listHistory"
     const val DOC_GET_AT_REVISION = "documents.getAtRevision"
