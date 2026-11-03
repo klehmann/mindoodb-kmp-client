@@ -3,6 +3,7 @@ package com.mindoo.db.bridge
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.int
@@ -84,11 +85,20 @@ class ServerSyncIntegrationTest {
                 assertTrue(pushed.pushed, "alice pushed: $pushed")
 
                 val bobUser = MindooDBBridge.createUser(endpoint, "cn=bob/o=kt", "bob-pw")
-                val request = MindooDBBridge.createJoinRequest(endpoint, bobUser.identity)
+                val request = MindooDBBridge.createJoinRequest(endpoint, bobUser.identity, label = "Bob's service")
+                val info = alice.inspectJoinRequest(request.joinRequest)
+                assertEquals("cn=bob/o=kt", info.username)
+                assertEquals("Bob's service", info.label)
+                assertTrue(info.hasUserKey)
+                assertEquals(false, info.directoryUser?.exists)
+                assertTrue(Regex("^([0-9a-f]{2}:){7}[0-9a-f]{2}$").matches(info.signingPublicKeyFingerprint))
                 val approved = alice.approveJoinRequest(
                     request.joinRequest, adminPassword = "admin-pw", adminIdentity = created.adminIdentity,
                 )
                 assertTrue(approved.pushed.isNotEmpty(), "grant pushed with the approval")
+                val again = alice.inspectJoinRequest(request.joinRequest)
+                assertEquals(true, again.directoryUser?.deviceAlreadyGranted, "device granted after approval")
+                assertEquals("Bob's service", again.directoryUser?.devices?.single()?.label)
                 MindooDBBridge.joinTenant(
                     endpoint, approved.joinResponse, bobUser.identity, "bob-pw", databases = listOf("notes"),
                 )
@@ -99,7 +109,20 @@ class ServerSyncIntegrationTest {
             }
 
             try {
+                val progress = mutableListOf<SyncProgressEvent>()
+                val watcher = launch { bob.syncProgress().collect { progress += it } }
+                delay(300) // let the subscription reach the sidecar
                 bob.refresh(direction = SyncDirection.Pull)
+                // Events are delivered asynchronously; give the last ones a moment.
+                val notesPulls = withTimeout(5_000) {
+                    while (progress.toList().count { it.dbId == "notes" && it.direction == "pull" && it.phase == "complete" } < 2) delay(50)
+                    progress.toList().filter { it.dbId == "notes" && it.direction == "pull" && !it.background }
+                }
+                watcher.cancel()
+                assertEquals(setOf("docs", "attachments"), notesPulls.filter { it.phase == "complete" }.map { it.store }.toSet())
+                val docsDone = notesPulls.last { it.store == "docs" && it.phase == "complete" }
+                assertTrue(docsDone.transferredEntries > 0, "first pull transferred data: $docsDone")
+                assertTrue(notesPulls.any { it.phase == "transferring" }, "transferring phase reported")
                 val bobNotes = bob.database("notes")
                 val ids = bobNotes.documents.list()
                 val noteId = ids.first { it != "settings_main" }

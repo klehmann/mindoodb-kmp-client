@@ -28,6 +28,9 @@ object Methods {
     const val SESSION_PUBLISH_TO_SERVER = "session.publishToServer"
 
     const val TENANT_APPROVE_JOIN_REQUEST = "tenant.approveJoinRequest"
+    const val TENANT_INSPECT_JOIN_REQUEST = "tenant.inspectJoinRequest"
+    const val SESSION_WATCH_SYNC = "session.watchSync"
+    const val SESSION_UNWATCH_SYNC = "session.unwatchSync"
 
     const val KEYBAG_CREATE_DOC_KEY = "keybag.createDocKey"
     const val KEYBAG_LIST_KEYS = "keybag.listKeys"

@@ -245,6 +245,66 @@ data class RefreshResult(
     val databases: List<DatabaseSyncResult> = emptyList(),
 )
 
+/** A device already registered for the person a join request names. */
+@Serializable
+data class DirectoryDevice(
+    val label: String? = null,
+    val signingPublicKeyFingerprint: String,
+    val wipeRequested: Boolean = false,
+)
+
+/** What the directory knows about the name in a join request. */
+@Serializable
+data class DirectoryUserMatch(
+    /** The name is already in the directory: approving adds a device to that person. */
+    val exists: Boolean,
+    /** This exact device (signing key) is already granted. */
+    val deviceAlreadyGranted: Boolean,
+    val devices: List<DirectoryDevice> = emptyList(),
+)
+
+/**
+ * A decoded join request, for the admin to check before approving. Compare the
+ * fingerprints with the ones the joining device shows (Haven shows the same format).
+ */
+@Serializable
+data class JoinRequestInfo(
+    val version: Int,
+    /** Null when the request leaves the name to the admin (pass `username` to approve). */
+    val username: String? = null,
+    val label: String? = null,
+    val signingPublicKey: String,
+    val encryptionPublicKey: String,
+    val signingPublicKeyFingerprint: String,
+    val encryptionPublicKeyFingerprint: String,
+    /** False for a device whose person has no User-Key yet; MindooDB then cannot approve it. */
+    val hasUserKey: Boolean,
+    /** Keys the device asks for (a hint, not a grant); null means the default set. */
+    val requestedDocKeyIds: List<String>? = null,
+    /** Null when the request carries no name. */
+    val directoryUser: DirectoryUserMatch? = null,
+)
+
+/** Progress of one push or pull (one database, one store), from [MindooDBSession.syncProgress]. */
+@Serializable
+data class SyncProgressEvent(
+    val dbId: String,
+    /** "pull" or "push". */
+    val direction: String,
+    /** "docs" or "attachments". */
+    val store: String,
+    /** "preparing", "planning", "transferring", "processing" or "complete" (always last). */
+    val phase: String,
+    val message: String = "",
+    val scannedEntries: Long = 0,
+    val transferredEntries: Long = 0,
+    val transferredBytes: Long = 0,
+    /** Entries in the source store, when known: `scannedEntries / totalSourceEntries` is the completion ratio. */
+    val totalSourceEntries: Long? = null,
+    /** True for the periodic background sync. */
+    val background: Boolean = false,
+)
+
 /** Which way [MindooDBSession.refresh] syncs. */
 enum class SyncDirection(val wire: String) { Both("both"), Pull("pull"), Push("push") }
 

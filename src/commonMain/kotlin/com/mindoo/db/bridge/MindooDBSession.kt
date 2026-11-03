@@ -1,5 +1,9 @@
 package com.mindoo.db.bridge
 
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
@@ -85,6 +89,27 @@ class MindooDBSession internal constructor(
         adminIdentity?.let { put("adminIdentity", it) }
     })
 
+    /**
+     * Progress of every sync of this session (refresh, publish, approval and
+     * the background loop) while collected. Each push or pull ends with a
+     * `complete` event.
+     */
+    fun syncProgress(): Flow<SyncProgressEvent> = channelFlow {
+        val subscriptionId = rpc.newSubscriptionId()
+        val job = launch {
+            rpc.events(subscriptionId).collect { ev ->
+                if (ev.event == "sync-progress") {
+                    trySend(rpc.json.decodeFromJsonElement(SyncProgressEvent.serializer(), ev.payload))
+                }
+            }
+        }
+        rpc.callRaw(Methods.SESSION_WATCH_SYNC, params { put("subscriptionId", subscriptionId) })
+        awaitClose {
+            job.cancel()
+            launch { rpc.callRaw(Methods.SESSION_UNWATCH_SYNC, params { put("subscriptionId", subscriptionId) }) }
+        }
+    }
+
     // ----- KeyBag -----
 
     suspend fun createDocKey(keyId: String): CreateDocKeyResult =
@@ -98,6 +123,14 @@ class MindooDBSession internal constructor(
     }
 
     // ----- Join (admin) -----
+
+    /**
+     * Decode a join request (the `mdb://join-request/…` URI or object) without
+     * approving it: who asks, the device label, key fingerprints, and whether
+     * the name or this device is already in the directory.
+     */
+    suspend fun inspectJoinRequest(joinRequest: JsonElement): JoinRequestInfo =
+        rpc.call(Methods.TENANT_INSPECT_JOIN_REQUEST, params { put("joinRequest", joinRequest) })
 
     /**
      * Approve a join request. Prefer [adminIdentity] from [CreatedTenant.adminIdentity]
