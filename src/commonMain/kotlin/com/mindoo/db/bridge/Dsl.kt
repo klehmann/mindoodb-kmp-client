@@ -180,3 +180,23 @@ class ViewDefinitionBuilder {
 
 fun viewDefinition(block: ViewDefinitionBuilder.() -> Unit): JsonObject =
     ViewDefinitionBuilder().apply(block).build()
+
+/**
+ * Options for `Database.openViewNavigator`: initial expansion ([expandAll] or
+ * [expandLevel]) and which entries the navigator walks.
+ */
+fun navigatorOptions(
+    expandAll: Boolean? = null,
+    expandLevel: Int? = null,
+    hideEmptyCategories: Boolean? = null,
+    categoriesOnly: Boolean? = null,
+    documentsOnly: Boolean? = null,
+    fromCategory: String? = null,
+): JsonObject = buildJsonObject {
+    expandAll?.let { put("expandAll", it) }
+    expandLevel?.let { put("expandLevel", it) }
+    hideEmptyCategories?.let { put("hideEmptyCategories", it) }
+    categoriesOnly?.let { put("categoriesOnly", it) }
+    documentsOnly?.let { put("documentsOnly", it) }
+    fromCategory?.let { put("fromCategory", it) }
+}

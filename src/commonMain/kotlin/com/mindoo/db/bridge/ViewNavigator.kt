@@ -54,8 +54,36 @@ class ViewNavigator internal constructor(
     suspend fun expandToLevel(level: Int) { navCall("expandToLevel", listOf(intArg(level))) }
     suspend fun expand(origin: String, docId: String) { navCall("expand", listOf(strArg(origin), strArg(docId))) }
     suspend fun collapse(origin: String, docId: String) { navCall("collapse", listOf(strArg(origin), strArg(docId))) }
+    suspend fun expandPos(position: String) { navCall("expandPos", listOf(strArg(position))) }
+    suspend fun collapsePos(position: String) { navCall("collapsePos", listOf(strArg(position))) }
 
-    /** Emits [Unit] whenever the underlying view changes. */
+    suspend fun gotoNextSibling(): ViewEntry? = decodeEntry(navCall("gotoNextSibling"))
+    suspend fun gotoPrevSibling(): ViewEntry? = decodeEntry(navCall("gotoPrevSibling"))
+    suspend fun gotoLastChild(): ViewEntry? = decodeEntry(navCall("gotoLastChild"))
+    /** Jump to a position such as `"1.2"` ([ViewEntry.position]). */
+    suspend fun gotoPos(position: String): ViewEntry? = decodeEntry(navCall("gotoPos", listOf(strArg(position))))
+
+    suspend fun select(origin: String, docId: String, selectParentCategories: Boolean = false) {
+        navCall("select", listOf(strArg(origin), strArg(docId), JsonPrimitive(selectParentCategories)))
+    }
+    suspend fun deselect(origin: String, docId: String) { navCall("deselect", listOf(strArg(origin), strArg(docId))) }
+    suspend fun selectAll() { navCall("selectAll") }
+    suspend fun deselectAll() { navCall("deselectAll") }
+    suspend fun isSelected(origin: String, docId: String): Boolean =
+        (navCall("isSelected", listOf(strArg(origin), strArg(docId))) as? JsonPrimitive)?.content == "true"
+    suspend fun readSelected(limit: Int = 100, offset: Int = 0): List<ViewEntry> =
+        decodeEntries(navCall("readSelected", listOf(intArg(limit), intArg(offset))))
+
+    /**
+     * Apply document changes since the view was built or last refreshed. Not
+     * needed while [changes] is collected: the view then follows the database.
+     */
+    suspend fun refresh() { navCall("refresh") }
+
+    /**
+     * Keeps the view current and emits [Unit] after each update, so re-read
+     * entries (e.g. [readForward]) on every emission.
+     */
     fun changes(): Flow<Unit> = channelFlow {
         val subscriptionId = rpc.newSubscriptionId()
         val job = launch {
@@ -67,7 +95,12 @@ class ViewNavigator internal constructor(
         })
         awaitClose {
             job.cancel()
-            launch { rpc.callRaw(Methods.NAV_UNSUBSCRIBE, params { put("subscriptionId", subscriptionId) }) }
+            launch {
+                rpc.callRaw(Methods.NAV_UNSUBSCRIBE, params {
+                    put("navigatorId", navigatorId)
+                    put("subscriptionId", subscriptionId)
+                })
+            }
         }
     }
 

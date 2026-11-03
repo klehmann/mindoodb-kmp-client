@@ -163,7 +163,9 @@ object MindooDBBridge {
 
     /**
      * Join a tenant with a join-response (object or URI) and persist an identity
-     * bundle so [openSession] can reopen the user.
+     * bundle so [openSession] can reopen the user. With a server URL (from the
+     * response or [serverUrl]) the directory is pulled first, so the grant is
+     * there. [sharePassword] is only needed for legacy (v2) join responses.
      */
     suspend fun joinTenant(
         host: String,
@@ -172,7 +174,7 @@ object MindooDBBridge {
         joinResponse: JsonElement,
         user: JsonElement,
         password: String,
-        sharePassword: String,
+        sharePassword: String? = null,
         databases: List<String> = emptyList(),
         serverUrl: String? = null,
     ): JoinedTenant = bootstrap(host, port, bootstrapToken) { rpc ->
@@ -180,7 +182,7 @@ object MindooDBBridge {
             put("joinResponse", joinResponse)
             put("user", user)
             put("password", password)
-            put("sharePassword", sharePassword)
+            sharePassword?.let { put("sharePassword", it) }
             put("databases", buildJsonArray { databases.forEach { add(it) } })
             serverUrl?.let { put("serverUrl", it) }
         })
@@ -191,7 +193,7 @@ object MindooDBBridge {
         joinResponse: JsonElement,
         user: JsonElement,
         password: String,
-        sharePassword: String,
+        sharePassword: String? = null,
         databases: List<String> = emptyList(),
         serverUrl: String? = null,
     ): JoinedTenant = joinTenant(

@@ -234,7 +234,6 @@ class BridgeIntegrationTest {
                 alice.approveJoinRequest(
                     joinRequest = req.joinRequest,
                     adminPassword = "adminpw",
-                    sharePassword = "share-secret",
                     adminIdentity = created.adminIdentity,
                 )
             } finally {
@@ -247,7 +246,6 @@ class BridgeIntegrationTest {
                 joinResponse = approved.joinResponse,
                 user = bob.identity,
                 password = "pwB",
-                sharePassword = "share-secret",
                 // Empty: Bob's isolated local store has no directory grants until
                 // he syncs with a server; KeyBag import is what we verify here.
                 databases = emptyList(),

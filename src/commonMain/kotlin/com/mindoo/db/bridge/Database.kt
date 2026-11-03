@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -44,11 +45,59 @@ class UpdateOpsBuilder {
         })
     }
 
+    /** Set collaborative text (concurrent edits merge character-wise). */
     fun setText(path: List<String>, value: String) {
         ops.add(buildJsonObject {
             put("op", "setText")
             put("path", buildJsonArray { path.forEach { add(it) } })
             put("value", value)
+        })
+    }
+
+    fun setText(field: String, value: String) = setText(listOf(field), value)
+
+    /** Set an atomic string (IDs, status, enum values): concurrent changes never mix. */
+    fun setAtomic(path: List<String>, value: String) = set(path, MindooValue.atomic(value))
+
+    fun setAtomic(field: String, value: String) = setAtomic(listOf(field), value)
+
+    /** Insert/delete characters of collaborative text at [path]. */
+    fun textSplice(path: List<String>, index: Int, deleteCount: Int, insert: String? = null) {
+        ops.add(buildJsonObject {
+            put("op", "textSplice")
+            put("path", buildJsonArray { path.forEach { add(it) } })
+            put("index", index)
+            put("deleteCount", deleteCount)
+            insert?.let { put("insert", it) }
+        })
+    }
+
+    /** Add [delta] to a counter created with [MindooValue.counter]; concurrent increments add up. */
+    fun increment(path: List<String>, delta: Long = 1) {
+        ops.add(buildJsonObject {
+            put("op", "increment")
+            put("path", buildJsonArray { path.forEach { add(it) } })
+            put("delta", delta)
+        })
+    }
+
+    fun increment(field: String, delta: Long = 1) = increment(listOf(field), delta)
+
+    fun listInsert(path: List<String>, index: Int, values: List<Any?>) {
+        ops.add(buildJsonObject {
+            put("op", "listInsert")
+            put("path", buildJsonArray { path.forEach { add(it) } })
+            put("index", index)
+            put("values", anyToJson(values))
+        })
+    }
+
+    fun listDelete(path: List<String>, index: Int, deleteCount: Int = 1) {
+        ops.add(buildJsonObject {
+            put("op", "listDelete")
+            put("path", buildJsonArray { path.forEach { add(it) } })
+            put("index", index)
+            put("deleteCount", deleteCount)
         })
     }
 
@@ -74,11 +123,26 @@ class DocumentApi internal constructor(
     suspend fun headCursor(): JsonElement? =
         rpc.call<HeadCursor>(Methods.DOC_HEAD_CURSOR, params { put("db", dbId) }).cursor
 
-    suspend fun create(initialValues: Map<String, Any?>? = null, id: String? = null): MindooDocument =
+    /**
+     * Create a document. [id] is a custom ID (`^[a-z][a-z0-9_]*$`, idempotent and
+     * convergent across replicas); [idPrefix] instead prefixes a generated ID.
+     * [decryptionKeyId] encrypts the document with a named KeyBag key (see
+     * `MindooDBSession.createDocKey`) instead of the tenant's `default` key.
+     */
+    suspend fun create(
+        initialValues: Map<String, Any?>? = null,
+        id: String? = null,
+        idPrefix: String? = null,
+        decryptionKeyId: String? = null,
+        assumeUniqueId: Boolean? = null,
+    ): MindooDocument =
         rpc.call(Methods.DOC_CREATE, params {
             put("db", dbId)
             put("options", buildJsonObject {
                 id?.let { put("id", it) }
+                idPrefix?.let { put("idPrefix", it) }
+                decryptionKeyId?.let { put("decryptionKeyId", it) }
+                assumeUniqueId?.let { put("assumeUniqueId", it) }
                 initialValues?.let { put("initialValues", anyToJson(it)) }
             })
         })
@@ -106,6 +170,20 @@ class DocumentApi internal constructor(
         rpc.callRaw(Methods.DOC_DELETE, params { put("db", dbId); put("docId", docId) })
     }
 
+    suspend fun deleteMany(docIds: List<String>) {
+        rpc.callRaw(Methods.DOC_DELETE_MANY, params {
+            put("db", dbId)
+            put("docIds", buildJsonArray { docIds.forEach { add(it) } })
+        })
+    }
+
+    /** IDs of deleted documents (for undelete or cleanup). */
+    suspend fun listDeleted(idPrefix: String? = null): List<String> =
+        rpc.call<DocumentIdList>(Methods.DOC_LIST_DELETED, params {
+            put("db", dbId)
+            idPrefix?.let { put("options", buildJsonObject { put("idPrefix", it) }) }
+        }).ids
+
     suspend fun undelete(docId: String) {
         rpc.callRaw(Methods.DOC_UNDELETE, params { put("db", dbId); put("docId", docId) })
     }
@@ -131,10 +209,26 @@ class AttachmentApi internal constructor(
         rpc.callRaw(Methods.ATTACH_REMOVE, params { put("db", dbId); put("docId", docId); put("fileName", fileName) })
     }
 
+    /** Remove by [AttachmentInfo.attachmentId] (file names need not be unique). */
+    suspend fun removeById(docId: String, attachmentId: String) {
+        rpc.callRaw(Methods.ATTACH_REMOVE, params { put("db", dbId); put("docId", docId); put("attachmentId", attachmentId) })
+    }
+
     /** Stream an attachment's bytes as a cold flow (credit-based backpressure). */
-    fun read(docId: String, fileName: String, startOffset: Long = 0): Flow<ByteArray> = flow {
+    fun read(docId: String, fileName: String, startOffset: Long = 0): Flow<ByteArray> =
+        readStream(docId, startOffset) { put("fileName", fileName) }
+
+    /** Like [read], addressed by [AttachmentInfo.attachmentId]. */
+    fun readById(docId: String, attachmentId: String, startOffset: Long = 0): Flow<ByteArray> =
+        readStream(docId, startOffset) { put("attachmentId", attachmentId) }
+
+    private fun readStream(
+        docId: String,
+        startOffset: Long,
+        ref: JsonObjectBuilder.() -> Unit,
+    ): Flow<ByteArray> = flow {
         val open: OpenReadResult = rpc.call(Methods.ATTACH_OPEN_READ, params {
-            put("db", dbId); put("docId", docId); put("fileName", fileName); put("startOffset", startOffset)
+            put("db", dbId); put("docId", docId); ref(); put("startOffset", startOffset)
         })
         val sink = rpc.registerReadStream(open.streamId)
         try {

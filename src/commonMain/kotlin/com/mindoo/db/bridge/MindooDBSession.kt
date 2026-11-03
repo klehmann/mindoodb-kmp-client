@@ -39,8 +39,16 @@ class MindooDBSession internal constructor(
             put("mode", mode.wire)
         })
 
-    suspend fun refresh(dbId: String? = null): RefreshResult =
-        rpc.call(Methods.SESSION_REFRESH, params { dbId?.let { put("db", it) } })
+    /**
+     * Sync with the server now: one database, or `directory`, `userdirectory`
+     * and every open local database (docs and attachments). Throws when there
+     * is no server URL or the sync fails.
+     */
+    suspend fun refresh(dbId: String? = null, direction: SyncDirection = SyncDirection.Both): RefreshResult =
+        rpc.call(Methods.SESSION_REFRESH, params {
+            dbId?.let { put("db", it) }
+            put("direction", direction.wire)
+        })
 
     suspend fun awaitIndexReady(dbId: String? = null) {
         rpc.callRaw(Methods.SESSION_AWAIT_INDEX_READY, params { dbId?.let { put("db", it) } })
@@ -53,22 +61,28 @@ class MindooDBSession internal constructor(
         })
 
     /**
-     * Register this tenant on a MindooDB sync server. Requires the *server*
-     * system-admin credentials (not the tenant admin). On success, persists
-     * [serverUrl] and starts background sync.
+     * Register this tenant on a MindooDB sync server, push its `directory` and
+     * `userdirectory` (as the tenant admin when [adminPassword] is given), persist
+     * [serverUrl] and start background sync.
+     *
+     * Pass the *server* system-admin credentials, or leave them out on a server
+     * that lets any signed user register tenants (a config.json capability for
+     * tenant creation with username `*`); the tenant admin then signs the request.
      */
     suspend fun publishToServer(
         serverUrl: String,
-        systemAdminUser: JsonElement,
-        systemAdminPassword: String,
+        systemAdminUser: JsonElement? = null,
+        systemAdminPassword: String? = null,
         adminPassword: String? = null,
         adminUsername: String? = null,
-    ): JsonElement = rpc.callRaw(Methods.SESSION_PUBLISH_TO_SERVER, params {
+        adminIdentity: JsonElement? = null,
+    ): PublishResult = rpc.call(Methods.SESSION_PUBLISH_TO_SERVER, params {
         put("serverUrl", serverUrl)
-        put("systemAdminUser", systemAdminUser)
-        put("systemAdminPassword", systemAdminPassword)
+        systemAdminUser?.let { put("systemAdminUser", it) }
+        systemAdminPassword?.let { put("systemAdminPassword", it) }
         adminPassword?.let { put("adminPassword", it) }
         adminUsername?.let { put("adminUsername", it) }
+        adminIdentity?.let { put("adminIdentity", it) }
     })
 
     // ----- KeyBag -----
@@ -88,22 +102,29 @@ class MindooDBSession internal constructor(
     /**
      * Approve a join request. Prefer [adminIdentity] from [CreatedTenant.adminIdentity]
      * (or pass [adminSigningKey]). Default response format is a URI string.
+     *
+     * [label] names the joining device (overrides the request's), [username]
+     * registers it under an existing person (an additional device) instead of
+     * the name from the request. With a server URL the grant is pushed right
+     * away, so the new member can join and sync.
      */
     suspend fun approveJoinRequest(
         joinRequest: JsonElement,
         adminPassword: String,
-        sharePassword: String,
         adminIdentity: JsonElement? = null,
         adminSigningKey: JsonElement? = null,
         serverUrl: String? = null,
         sharedDocKeyIds: List<String>? = null,
         label: String? = null,
+        username: String? = null,
+        tenantLabel: String? = null,
         format: String = "uri",
     ): ApproveJoinResult = rpc.call(Methods.TENANT_APPROVE_JOIN_REQUEST, params {
         put("joinRequest", joinRequest)
         put("adminPassword", adminPassword)
-        put("sharePassword", sharePassword)
         put("format", format)
+        username?.let { put("username", it) }
+        tenantLabel?.let { put("tenantLabel", it) }
         adminIdentity?.let { put("adminIdentity", it) }
         adminSigningKey?.let { put("adminSigningKey", it) }
         serverUrl?.let { put("serverUrl", it) }
