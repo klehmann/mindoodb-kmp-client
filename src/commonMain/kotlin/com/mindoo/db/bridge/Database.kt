@@ -491,14 +491,21 @@ class Database internal constructor(
         }
     }
 
-    /** Open a virtual-view navigator over an ephemeral summary view. */
+    /**
+     * Open a virtual-view navigator over an ephemeral summary view of this
+     * database, or with [sources] over several databases (also of other
+     * tenants in this session): each source adds its entries under its own
+     * origin, with its own filter or text clause if given.
+     */
     suspend fun openViewNavigator(
         definition: JsonObject,
         options: JsonObject? = null,
         navigatorOptions: JsonObject? = null,
+        sources: List<ViewSource>? = null,
     ): ViewNavigator {
         val handle: NavigatorHandle = rpc.call(Methods.VIEW_OPEN_NAVIGATOR, params {
             put("db", id)
+            sources?.let { list -> put("sources", JsonArray(list.map { it.toJson() })) }
             put("definition", definition)
             options?.let { put("options", it) }
             navigatorOptions?.let { put("navigatorOptions", it) }
