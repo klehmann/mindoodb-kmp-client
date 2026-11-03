@@ -406,8 +406,48 @@ class Database internal constructor(
         }
     }
 
+    /**
+     * Read the changefeed after [sinceCursor] up to its current end, one page at
+     * a time, without following live changes: the building block for jobs that
+     * mirror data elsewhere. Save the returned page's `cursor` and pass it next time.
+     * [idPrefix] skips other documents before they are decrypted.
+     */
+    suspend fun readChanges(sinceCursor: JsonElement? = null, limit: Int = 100, idPrefix: String? = null): ChangePage =
+        rpc.call(Methods.CHANGES_READ, changesParams(sinceCursor, idPrefix) { put("limit", limit) })
+
+    /** Like [readChanges], with document id, deleted flag and time only; nothing is decrypted. */
+    suspend fun readChangeMetadata(
+        sinceCursor: JsonElement? = null,
+        limit: Int = 1000,
+        idPrefix: String? = null,
+    ): ChangeMetadataPage = rpc.call(Methods.CHANGES_READ, changesParams(sinceCursor, idPrefix) {
+        put("limit", limit)
+        put("metadataOnly", true)
+    })
+
+    /** Every change after [sinceCursor] up to the current end, paged internally; completes when caught up. */
+    fun changesUntilNow(sinceCursor: JsonElement? = null, pageSize: Int = 100, idPrefix: String? = null): Flow<DocumentChange> = flow {
+        var cursor = sinceCursor
+        do {
+            val page = readChanges(cursor, pageSize, idPrefix)
+            page.changes.forEach { emit(it) }
+            cursor = page.cursor ?: cursor
+        } while (!page.done)
+    }
+
+    /** How many documents changed after [sinceCursor] (e.g. to show progress before [readChanges]). */
+    suspend fun countChanges(sinceCursor: JsonElement? = null, idPrefix: String? = null): Int =
+        rpc.call<ChangeCount>(Methods.CHANGES_COUNT, changesParams(sinceCursor, idPrefix) {}).count
+
+    private fun changesParams(cursor: JsonElement?, idPrefix: String?, extra: JsonObjectBuilder.() -> Unit) = params {
+        put("db", id)
+        put("cursor", cursor ?: JsonNull)
+        idPrefix?.let { put("idPrefix", it) }
+        extra()
+    }
+
     /** Follow the changefeed from an optional cursor; emits each changed document, then live updates. */
-    fun changes(sinceCursor: JsonElement? = null): Flow<DocumentChange> = channelFlow {
+    fun changes(sinceCursor: JsonElement? = null, idPrefix: String? = null): Flow<DocumentChange> = channelFlow {
         val subscriptionId = rpc.newSubscriptionId()
         val job = launch {
             rpc.events(subscriptionId).collect { ev ->
@@ -420,6 +460,30 @@ class Database internal constructor(
         rpc.callRaw(Methods.CHANGES_ITERATE_SINCE, params {
             put("db", id); put("subscriptionId", subscriptionId)
             put("cursor", sinceCursor ?: JsonNull)
+            idPrefix?.let { put("idPrefix", it) }
+        })
+        awaitClose {
+            job.cancel()
+            launch { rpc.callRaw(Methods.LIVE_QUERY_STOP, params { put("subscriptionId", subscriptionId) }) }
+        }
+    }
+
+    /** Like [changes], with metadata only: replay, then follow live, without decrypting documents. */
+    fun changeMetadata(sinceCursor: JsonElement? = null, idPrefix: String? = null): Flow<ChangeMetadataEvent> = channelFlow {
+        val subscriptionId = rpc.newSubscriptionId()
+        val job = launch {
+            rpc.events(subscriptionId).collect { ev ->
+                when (ev.event) {
+                    "change" -> trySend(rpc.json.decodeFromJsonElement(ChangeMetadataEvent.serializer(), ev.payload))
+                    "change-error" -> close(BridgeException(ErrorCode.Internal, ev.payload.toString()))
+                }
+            }
+        }
+        rpc.callRaw(Methods.CHANGES_ITERATE_SINCE, params {
+            put("db", id); put("subscriptionId", subscriptionId)
+            put("cursor", sinceCursor ?: JsonNull)
+            put("metadataOnly", true)
+            idPrefix?.let { put("idPrefix", it) }
         })
         awaitClose {
             job.cancel()
