@@ -265,9 +265,13 @@ session.publishToServer(url, adminPassword = "admin-pw")
 // session.publishToServer(url, systemAdminIdentity, systemAdminPassword, adminPassword = "admin-pw")
 session.refresh()
 
+// Watch sync progress (refresh, publish, approval and background syncs)
+// launch { session.syncProgress().collect { println("${it.dbId} ${it.direction} ${it.phase} ${it.transferredEntries}") } }
+
 // Join flow (the approval pushes the grant when the session has a server URL)
 val bob = MindooDBBridge.createUser(sidecar.endpoint, "cn=bob/o=acme", "bob-pw")
 val req = MindooDBBridge.createJoinRequest(sidecar.endpoint, bob.identity, label = "Billing service")
+val info = session.inspectJoinRequest(req.joinRequest)   // name, label, fingerprints, already known?
 val approved = session.approveJoinRequest(
     req.joinRequest, adminPassword = "admin-pw", adminIdentity = created.adminIdentity,
 )
