@@ -42,6 +42,9 @@ object Methods {
     const val DOC_DELETE = "documents.delete"
     const val DOC_DELETE_MANY = "documents.deleteMany"
     const val DOC_LIST_DELETED = "documents.listDeleted"
+    const val DOC_GET_RICH_TEXT = "documents.getRichText"
+    const val DOC_GET_TEXT_CURSORS = "documents.getTextCursors"
+    const val DOC_RESOLVE_TEXT_CURSORS = "documents.resolveTextCursors"
     const val DOC_UNDELETE = "documents.undelete"
     const val DOC_LIST_HISTORY = "documents.listHistory"
     const val DOC_GET_AT_REVISION = "documents.getAtRevision"
@@ -69,6 +72,8 @@ object Methods {
     const val STREAM_CREDIT = "stream.credit"
 
     const val CHANGES_ITERATE_SINCE = "changes.iterateSince"
+    const val CHANGES_READ = "changes.read"
+    const val CHANGES_COUNT = "changes.count"
 }
 
 /** Stable bridge error codes mirrored from the sidecar. */

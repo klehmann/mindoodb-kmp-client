@@ -5,6 +5,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -92,6 +94,50 @@ class UpdateOpsBuilder {
         })
     }
 
+    /** Apply marks (e.g. `{"bold": true}`) to [length] characters of text at [path], starting at [index]. */
+    fun textMark(path: List<String>, index: Int, length: Int, marks: Map<String, Any?>) {
+        ops.add(buildJsonObject {
+            put("op", "textMark")
+            put("path", buildJsonArray { path.forEach { add(it) } })
+            put("index", index)
+            put("length", length)
+            put("marks", anyToJson(marks))
+        })
+    }
+
+    /** Remove the marks named [names] from a range of text at [path]. */
+    fun textUnmark(path: List<String>, index: Int, length: Int, names: List<String>) {
+        ops.add(buildJsonObject {
+            put("op", "textUnmark")
+            put("path", buildJsonArray { path.forEach { add(it) } })
+            put("index", index)
+            put("length", length)
+            put("names", buildJsonArray { names.forEach { add(it) } })
+        })
+    }
+
+    /**
+     * Replace the rich-text field at [path] with [spans]. MindooDB diffs them
+     * against the current spans (at the update's `baseHeads`), so concurrent
+     * edits elsewhere in the field survive. Creates the field when missing.
+     */
+    fun richText(path: List<String>, spans: List<RichTextSpan>) {
+        ops.add(buildJsonObject {
+            put("op", "richText")
+            put("path", buildJsonArray { path.forEach { add(it) } })
+            put("spans", richTextJson.encodeToJsonElement(ListSerializer(RichTextSpan.serializer()), spans))
+        })
+    }
+
+    /** Positional rich-text edits (insert/delete/mark), applied in order at the update's `baseHeads`. */
+    fun richTextSteps(path: List<String>, steps: List<RichTextStep>) {
+        ops.add(buildJsonObject {
+            put("op", "richTextSteps")
+            put("path", buildJsonArray { path.forEach { add(it) } })
+            put("steps", richTextJson.encodeToJsonElement(ListSerializer(RichTextStep.serializer()), steps))
+        })
+    }
+
     fun listDelete(path: List<String>, index: Int, deleteCount: Int = 1) {
         ops.add(buildJsonObject {
             put("op", "listDelete")
@@ -102,6 +148,11 @@ class UpdateOpsBuilder {
     }
 
     internal fun build(): JsonArray = JsonArray(ops)
+}
+
+private val richTextJson = Json {
+    encodeDefaults = true
+    explicitNulls = false
 }
 
 fun updateOps(block: UpdateOpsBuilder.() -> Unit): JsonArray = UpdateOpsBuilder().apply(block).build()
@@ -187,6 +238,42 @@ class DocumentApi internal constructor(
     suspend fun undelete(docId: String) {
         rpc.callRaw(Methods.DOC_UNDELETE, params { put("db", dbId); put("docId", docId) })
     }
+
+    /** The spans of a rich-text (or plain collaborative text) field, with marks; plain `get` drops the marks. */
+    suspend fun getRichText(docId: String, path: List<String>): RichTextSnapshot =
+        rpc.call(Methods.DOC_GET_RICH_TEXT, params {
+            put("db", dbId); put("docId", docId)
+            put("path", buildJsonArray { path.forEach { add(it) } })
+        })
+
+    /**
+     * Stable cursors for character positions in the text at [path], e.g. to
+     * anchor comments; store them with `setAtomic`. [heads] reads an older version.
+     */
+    suspend fun getTextCursors(
+        docId: String,
+        path: List<String>,
+        positions: List<TextCursorPosition>,
+        heads: List<String>? = null,
+    ): TextCursors = rpc.call(Methods.DOC_GET_TEXT_CURSORS, params {
+        put("db", dbId); put("docId", docId)
+        put("path", buildJsonArray { path.forEach { add(it) } })
+        put("positions", JsonArray(positions.map { it.toJson() }))
+        heads?.let { h -> put("heads", buildJsonArray { h.forEach { add(it) } }) }
+    })
+
+    /** Current (or, with [heads], historical) character indexes of [cursors]. */
+    suspend fun resolveTextCursors(
+        docId: String,
+        path: List<String>,
+        cursors: List<String>,
+        heads: List<String>? = null,
+    ): TextCursorPositions = rpc.call(Methods.DOC_RESOLVE_TEXT_CURSORS, params {
+        put("db", dbId); put("docId", docId)
+        put("path", buildJsonArray { path.forEach { add(it) } })
+        put("cursors", buildJsonArray { cursors.forEach { add(it) } })
+        heads?.let { h -> put("heads", buildJsonArray { h.forEach { add(it) } }) }
+    })
 
     suspend fun history(docId: String): List<HistoryEntry> =
         rpc.call<HistoryResult>(Methods.DOC_LIST_HISTORY, params { put("db", dbId); put("docId", docId) }).history
@@ -319,8 +406,48 @@ class Database internal constructor(
         }
     }
 
+    /**
+     * Read the changefeed after [sinceCursor] up to its current end, one page at
+     * a time, without following live changes: the building block for jobs that
+     * mirror data elsewhere. Save the returned page's `cursor` and pass it next time.
+     * [idPrefix] skips other documents before they are decrypted.
+     */
+    suspend fun readChanges(sinceCursor: JsonElement? = null, limit: Int = 100, idPrefix: String? = null): ChangePage =
+        rpc.call(Methods.CHANGES_READ, changesParams(sinceCursor, idPrefix) { put("limit", limit) })
+
+    /** Like [readChanges], with document id, deleted flag and time only; nothing is decrypted. */
+    suspend fun readChangeMetadata(
+        sinceCursor: JsonElement? = null,
+        limit: Int = 1000,
+        idPrefix: String? = null,
+    ): ChangeMetadataPage = rpc.call(Methods.CHANGES_READ, changesParams(sinceCursor, idPrefix) {
+        put("limit", limit)
+        put("metadataOnly", true)
+    })
+
+    /** Every change after [sinceCursor] up to the current end, paged internally; completes when caught up. */
+    fun changesUntilNow(sinceCursor: JsonElement? = null, pageSize: Int = 100, idPrefix: String? = null): Flow<DocumentChange> = flow {
+        var cursor = sinceCursor
+        do {
+            val page = readChanges(cursor, pageSize, idPrefix)
+            page.changes.forEach { emit(it) }
+            cursor = page.cursor ?: cursor
+        } while (!page.done)
+    }
+
+    /** How many documents changed after [sinceCursor] (e.g. to show progress before [readChanges]). */
+    suspend fun countChanges(sinceCursor: JsonElement? = null, idPrefix: String? = null): Int =
+        rpc.call<ChangeCount>(Methods.CHANGES_COUNT, changesParams(sinceCursor, idPrefix) {}).count
+
+    private fun changesParams(cursor: JsonElement?, idPrefix: String?, extra: JsonObjectBuilder.() -> Unit) = params {
+        put("db", id)
+        put("cursor", cursor ?: JsonNull)
+        idPrefix?.let { put("idPrefix", it) }
+        extra()
+    }
+
     /** Follow the changefeed from an optional cursor; emits each changed document, then live updates. */
-    fun changes(sinceCursor: JsonElement? = null): Flow<DocumentChange> = channelFlow {
+    fun changes(sinceCursor: JsonElement? = null, idPrefix: String? = null): Flow<DocumentChange> = channelFlow {
         val subscriptionId = rpc.newSubscriptionId()
         val job = launch {
             rpc.events(subscriptionId).collect { ev ->
@@ -333,6 +460,30 @@ class Database internal constructor(
         rpc.callRaw(Methods.CHANGES_ITERATE_SINCE, params {
             put("db", id); put("subscriptionId", subscriptionId)
             put("cursor", sinceCursor ?: JsonNull)
+            idPrefix?.let { put("idPrefix", it) }
+        })
+        awaitClose {
+            job.cancel()
+            launch { rpc.callRaw(Methods.LIVE_QUERY_STOP, params { put("subscriptionId", subscriptionId) }) }
+        }
+    }
+
+    /** Like [changes], with metadata only: replay, then follow live, without decrypting documents. */
+    fun changeMetadata(sinceCursor: JsonElement? = null, idPrefix: String? = null): Flow<ChangeMetadataEvent> = channelFlow {
+        val subscriptionId = rpc.newSubscriptionId()
+        val job = launch {
+            rpc.events(subscriptionId).collect { ev ->
+                when (ev.event) {
+                    "change" -> trySend(rpc.json.decodeFromJsonElement(ChangeMetadataEvent.serializer(), ev.payload))
+                    "change-error" -> close(BridgeException(ErrorCode.Internal, ev.payload.toString()))
+                }
+            }
+        }
+        rpc.callRaw(Methods.CHANGES_ITERATE_SINCE, params {
+            put("db", id); put("subscriptionId", subscriptionId)
+            put("cursor", sinceCursor ?: JsonNull)
+            put("metadataOnly", true)
+            idPrefix?.let { put("idPrefix", it) }
         })
         awaitClose {
             job.cancel()

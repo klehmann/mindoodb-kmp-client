@@ -147,10 +147,55 @@ db.documents.update(doc.id, baseHeads = doc.heads) {
 db.documents.update(doc.id) { increment("views") }
 ```
 
+**Rich text and marks.** `richText(path, spans)` writes a rich-text field
+(`RichTextSpan.Block` / `RichTextSpan.Text(value, marks)`); MindooDB diffs the
+spans, so concurrent edits elsewhere in the field survive. `richTextSteps(path,
+steps)` makes positional edits (`RichTextStep.Splice` with optional marks),
+`textMark` / `textUnmark` format a range of any collaborative text.
+`getRichText(docId, path)` reads spans with marks plus the `heads` to pass as
+`baseHeads` of the next edit; `get` only returns the plain string (a block
+counts as one `\uFFFC` character).
+
+```kotlin
+val bold = buildJsonObject { put("bold", true) }
+db.documents.update(doc.id) {
+    richText(listOf("content"), listOf(
+        RichTextSpan.Block(buildJsonObject { put("type", "paragraph") }),
+        RichTextSpan.Text("Hello "), RichTextSpan.Text("world", bold),
+    ))
+}
+val snap = db.documents.getRichText(doc.id, listOf("content"))
+db.documents.update(doc.id, baseHeads = snap.heads) {
+    textMark(listOf("content"), index = 1, length = 5, marks = mapOf("italic" to true))
+}
+```
+
+**Text cursors.** `getTextCursors(docId, path, positions)` returns opaque
+cursors that keep pointing at the same character while others edit the text
+(anchor comments or highlights; store them with `setAtomic`).
+`resolveTextCursors(docId, path, cursors, heads?)` turns them back into indexes,
+now or at an older version.
+
 ### Query, views, full-text — `db`
 - `query(mindooQuery { … })` → `QueryResult`
 - `liveQuery(query)` → `Flow<QueryResult>` (re-emits on change)
-- `changes(sinceCursor?)` → `Flow<DocumentChange>` (replay then follow live)
+- `changes(sinceCursor?, idPrefix?)` → `Flow<DocumentChange>` (replay then follow live);
+  `changeMetadata(...)` the same without decrypting documents
+- `readChanges(sinceCursor?, limit, idPrefix?)` → `ChangePage(changes, cursor, done)`:
+  one page up to the current end, no live part (`readChangeMetadata` for ids
+  and deleted flags only, `changesUntilNow` pages through everything,
+  `countChanges` counts what is left). Persist the cursor with
+  `ChangeCursors.serialize` / `parse`:
+
+```kotlin
+var stored: String? = loadCursor()
+do {
+    val page = db.readChanges(ChangeCursors.parse(stored), limit = 500, idPrefix = "inv")
+    page.changes.forEach { export(it.doc) }
+    stored = ChangeCursors.serialize(page.cursor)
+    saveCursor(stored)             // after the page is processed
+} while (!page.done)
+```
 - `openViewNavigator(viewDefinition { … })` → `ViewNavigator`
 - `getFulltextSetup()` / `setFulltextSetup(config)`
 

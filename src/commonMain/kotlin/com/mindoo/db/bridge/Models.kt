@@ -2,7 +2,9 @@ package com.mindoo.db.bridge
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -170,6 +172,58 @@ data class DocumentChange(
     val doc: MindooDocument,
     val cursor: JsonElement? = null,
 )
+
+/** What changed, without the document body (nothing is decrypted). */
+@Serializable
+data class ChangeMetadata(
+    val docId: String,
+    val lastModified: Long,
+    val isDeleted: Boolean,
+)
+
+/** A metadata-only changefeed item. */
+@Serializable
+data class ChangeMetadataEvent(
+    val meta: ChangeMetadata,
+    val cursor: JsonElement? = null,
+)
+
+/**
+ * One page of the changefeed. Store [cursor] to continue later; [done] is true
+ * when the page reached the current end of the feed.
+ */
+@Serializable
+data class ChangePage(
+    val changes: List<DocumentChange> = emptyList(),
+    val cursor: JsonElement? = null,
+    val done: Boolean = true,
+)
+
+/** Like [ChangePage], with metadata only. */
+@Serializable
+data class ChangeMetadataPage(
+    val changes: List<ChangeMetadataEvent> = emptyList(),
+    val cursor: JsonElement? = null,
+    val done: Boolean = true,
+)
+
+@Serializable
+internal data class ChangeCount(val count: Int)
+
+/**
+ * Changefeed cursors are opaque JSON objects. Persist them as a string with
+ * [serialize] and pass [parse]d values back unchanged; `null` means "from the
+ * beginning".
+ */
+object ChangeCursors {
+    private val json = Json
+
+    fun serialize(cursor: JsonElement?): String? =
+        cursor?.takeIf { it !is JsonNull }?.let { json.encodeToString(JsonElement.serializer(), it) }
+
+    fun parse(value: String?): JsonElement? =
+        value?.takeIf { it.isNotBlank() }?.let { json.parseToJsonElement(it) }
+}
 
 /** Sync counters for one database (entries of the docs and attachments stores). */
 @Serializable
