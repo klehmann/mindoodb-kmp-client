@@ -67,21 +67,28 @@ object MindooDBBridge {
      * Create a tenant + admin + app user and persist a password-locked identity
      * bundle on disk, so a later [openSession] with [userId] + [password] can
      * reopen it. Runs over a short-lived bootstrap connection (no session).
+     *
+     * Pass `tenantId = null` to get a random, time-sortable ID like Haven's, so
+     * tenants created on different machines never collide on a shared server
+     * (read it from [CreatedTenant.tenantId]). [tenantLabel] is the
+     * human-readable name members see; the admin can change it later.
      */
     suspend fun createTenant(
         host: String,
         port: Int,
         bootstrapToken: String,
-        tenantId: String,
+        tenantId: String?,
         adminName: String,
         adminPassword: String,
         userId: String,
         password: String,
         databases: List<String> = emptyList(),
         serverUrl: String? = null,
+        tenantLabel: String? = null,
     ): CreatedTenant = bootstrap(host, port, bootstrapToken) { rpc ->
         rpc.call(Methods.TENANT_CREATE, params {
-            put("tenantId", tenantId)
+            tenantId?.let { put("tenantId", it) }
+            tenantLabel?.let { put("tenantLabel", it) }
             put("adminName", adminName)
             put("adminPassword", adminPassword)
             put("userName", userId)
@@ -94,16 +101,17 @@ object MindooDBBridge {
     /** Convenience: [createTenant] using a [BridgeEndpoint] from [Sidecar.start]. */
     suspend fun createTenant(
         endpoint: BridgeEndpoint,
-        tenantId: String,
+        tenantId: String?,
         adminName: String,
         adminPassword: String,
         userId: String,
         password: String,
         databases: List<String> = emptyList(),
         serverUrl: String? = null,
+        tenantLabel: String? = null,
     ): CreatedTenant = createTenant(
         endpoint.host, endpoint.port, endpoint.bootstrapToken,
-        tenantId, adminName, adminPassword, userId, password, databases, serverUrl,
+        tenantId, adminName, adminPassword, userId, password, databases, serverUrl, tenantLabel,
     )
 
     /**

@@ -18,6 +18,7 @@ data class SessionInfo(
 @Serializable
 data class CreatedTenant(
     val tenantId: String,
+    val tenantLabel: String? = null,
     /** The app user's username — pass this as `userId` to [MindooDBBridge.openSession]. */
     val userId: String,
     val adminUserId: String,
@@ -49,6 +50,8 @@ data class JoinRequestResult(
 @Serializable
 data class JoinedTenant(
     val tenantId: String,
+    /** The label in the admin's response; [MindooDBSession.getTenantLabel] reads the live one. */
+    val tenantLabel: String? = null,
     val userId: String,
     val databases: List<String> = emptyList(),
     val envDir: String? = null,
@@ -303,6 +306,17 @@ data class SyncProgressEvent(
     val totalSourceEntries: Long? = null,
     /** True for the periodic background sync. */
     val background: Boolean = false,
+)
+
+@Serializable
+internal data class TenantLabelResult(val tenantId: String, val label: String? = null)
+
+/** Result of [MindooDBSession.setTenantLabel]. */
+@Serializable
+data class SetTenantLabelResult(
+    val label: String,
+    /** The directory push that brings the new name to the other members (empty without a server). */
+    val pushed: List<DatabaseSyncResult> = emptyList(),
 )
 
 /** Which way [MindooDBSession.refresh] syncs. */

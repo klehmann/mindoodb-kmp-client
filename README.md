@@ -54,9 +54,10 @@ runBlocking {
 
     // 2. First-time setup: create a tenant + app user + identity bundle on disk.
     //    (See "Provisioning" below.) Idempotent to skip if the bundle exists.
-    MindooDBBridge.createTenant(
+    val created = MindooDBBridge.createTenant(
         endpoint = sidecar.endpoint,
-        tenantId = "acme",                 // lowercase letters/digits/-/_ only
+        tenantId = null,                   // null = random, time-sortable ID (like Haven)
+        tenantLabel = "Acme",              // the name members see; the admin can rename it
         adminName = "cn=admin/o=acme",
         adminPassword = "admin-pw",
         userId = "cn=alice/o=acme",
@@ -67,7 +68,7 @@ runBlocking {
     // 3. Open a session for the provisioned user.
     val session = MindooDBBridge.openSession(
         endpoint = sidecar.endpoint,
-        tenantId = "acme",
+        tenantId = created.tenantId,
         userId = "cn=alice/o=acme",
         password = "alice-pw",
         databases = listOf("notes"),
@@ -244,12 +245,16 @@ a password-locked identity bundle, and returns `CreatedTenant` including
 ```kotlin
 val created = MindooDBBridge.createTenant(
     endpoint = sidecar.endpoint,
-    tenantId = "acme", adminName = "cn=admin/o=acme", adminPassword = "admin-pw",
+    tenantId = null, tenantLabel = "Acme", adminName = "cn=admin/o=acme", adminPassword = "admin-pw",
     userId = "cn=alice/o=acme", password = "alice-pw", databases = listOf("notes"),
 )
 val session = MindooDBBridge.openSession(
     sidecar.endpoint, created.tenantId, created.userId, "alice-pw", created.databases,
 )
+
+// Tenant name (admin renames, every member reads it after a sync)
+session.setTenantLabel("Acme Corp", adminPassword = "admin-pw")
+session.getTenantLabel()
 
 // KeyBag
 session.createDocKey("finance")

@@ -122,6 +122,24 @@ class MindooDBSession internal constructor(
         rpc.callRaw(Methods.KEYBAG_PERSIST, params { })
     }
 
+    // ----- Tenant label -----
+
+    /** The tenant's human-readable name from the synced directory; null when none is set. */
+    suspend fun getTenantLabel(): String? =
+        rpc.call<TenantLabelResult>(Methods.TENANT_GET_LABEL, params { }).label
+
+    /**
+     * Rename the tenant (tenant admin only; a member gets `NotAuthorized`). The
+     * name is stored encrypted in the admin-signed directory and reaches the
+     * other members with the next sync.
+     */
+    suspend fun setTenantLabel(label: String, adminPassword: String, adminIdentity: JsonElement? = null): SetTenantLabelResult =
+        rpc.call(Methods.TENANT_SET_LABEL, params {
+            put("label", label)
+            put("adminPassword", adminPassword)
+            adminIdentity?.let { put("adminIdentity", it) }
+        })
+
     // ----- Join (admin) -----
 
     /**

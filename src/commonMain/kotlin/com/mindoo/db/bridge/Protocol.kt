@@ -29,6 +29,8 @@ object Methods {
 
     const val TENANT_APPROVE_JOIN_REQUEST = "tenant.approveJoinRequest"
     const val TENANT_INSPECT_JOIN_REQUEST = "tenant.inspectJoinRequest"
+    const val TENANT_GET_LABEL = "tenant.getLabel"
+    const val TENANT_SET_LABEL = "tenant.setLabel"
     const val SESSION_WATCH_SYNC = "session.watchSync"
     const val SESSION_UNWATCH_SYNC = "session.unwatchSync"
 
