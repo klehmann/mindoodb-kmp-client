@@ -72,6 +72,8 @@ object Methods {
     const val STREAM_CREDIT = "stream.credit"
 
     const val CHANGES_ITERATE_SINCE = "changes.iterateSince"
+    const val CHANGES_READ = "changes.read"
+    const val CHANGES_COUNT = "changes.count"
 }
 
 /** Stable bridge error codes mirrored from the sidecar. */

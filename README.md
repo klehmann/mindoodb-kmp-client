@@ -179,7 +179,23 @@ now or at an older version.
 ### Query, views, full-text — `db`
 - `query(mindooQuery { … })` → `QueryResult`
 - `liveQuery(query)` → `Flow<QueryResult>` (re-emits on change)
-- `changes(sinceCursor?)` → `Flow<DocumentChange>` (replay then follow live)
+- `changes(sinceCursor?, idPrefix?)` → `Flow<DocumentChange>` (replay then follow live);
+  `changeMetadata(...)` the same without decrypting documents
+- `readChanges(sinceCursor?, limit, idPrefix?)` → `ChangePage(changes, cursor, done)`:
+  one page up to the current end, no live part (`readChangeMetadata` for ids
+  and deleted flags only, `changesUntilNow` pages through everything,
+  `countChanges` counts what is left). Persist the cursor with
+  `ChangeCursors.serialize` / `parse`:
+
+```kotlin
+var stored: String? = loadCursor()
+do {
+    val page = db.readChanges(ChangeCursors.parse(stored), limit = 500, idPrefix = "inv")
+    page.changes.forEach { export(it.doc) }
+    stored = ChangeCursors.serialize(page.cursor)
+    saveCursor(stored)             // after the page is processed
+} while (!page.done)
+```
 - `openViewNavigator(viewDefinition { … })` → `ViewNavigator`
 - `getFulltextSetup()` / `setFulltextSetup(config)`
 
