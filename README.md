@@ -10,8 +10,11 @@ that holds the decrypted keys; this module is a thin, coroutine-first transport
 client that talks to it over a loopback WebSocket. The wire contract is
 documented in [`../mindoodb-jvm-bridge/PROTOCOL.md`](../mindoodb-jvm-bridge/PROTOCOL.md).
 
-```
-JVM backend ──(Kotlin client)──► loopback WS ──► Node supervisor ──fork──► session child (real mindoodb, decrypted keys)
+```mermaid
+flowchart LR
+    C["JVM backend<br/>Kotlin client"] -- "loopback WebSocket" --> S["Node supervisor"]
+    S -- "fork per session" --> K["Session child<br/>mindoodb + decrypted KeyBag"]
+    K --- R[("On-disk replica")]
 ```
 
 - **One session = one WebSocket connection = one isolated sidecar child process.**
