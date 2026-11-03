@@ -57,17 +57,22 @@ class ServerSyncIntegrationTest {
             return
         }
         val url = serverUrl!!
-        val tenantId = "kt" + System.currentTimeMillis().toString(36)
         runBlocking {
             sidecar = Sidecar.start(indexScript, dataRoot)
             val endpoint = sidecar!!.endpoint
 
             val created = MindooDBBridge.createTenant(
-                endpoint, tenantId = tenantId, adminName = "cn=admin/o=kt", adminPassword = "admin-pw",
+                endpoint, tenantId = null, tenantLabel = "Kotlin test tenant",
+                adminName = "cn=admin/o=kt", adminPassword = "admin-pw",
                 userId = "cn=alice/o=kt", password = "alice-pw", databases = listOf("notes"),
             )
+            val tenantId = created.tenantId
+            assertTrue(Regex("^[0-9a-f]{24}$").matches(tenantId), "generated tenant id: $tenantId")
+            assertEquals("Kotlin test tenant", created.tenantLabel)
             val alice = MindooDBBridge.openSession(endpoint, tenantId, "cn=alice/o=kt", "alice-pw", listOf("notes"))
             val bob = try {
+                assertEquals("Kotlin test tenant", alice.getTenantLabel())
+                alice.setTenantLabel("Kotlin test tenant (renamed)", adminPassword = "admin-pw")
                 val published = alice.publishToServer(url, adminPassword = "admin-pw")
                 assertTrue(published.pushed.any { it.dbId == "directory" && it.pushedEntries > 0 }, "directory pushed")
 
@@ -123,6 +128,9 @@ class ServerSyncIntegrationTest {
                 val docsDone = notesPulls.last { it.store == "docs" && it.phase == "complete" }
                 assertTrue(docsDone.transferredEntries > 0, "first pull transferred data: $docsDone")
                 assertTrue(notesPulls.any { it.phase == "transferring" }, "transferring phase reported")
+                assertEquals("Kotlin test tenant (renamed)", bob.getTenantLabel())
+                val denied = runCatching { bob.setTenantLabel("hijack", adminPassword = "bob-pw") }.exceptionOrNull()
+                assertEquals(ErrorCode.NotAuthorized, (denied as? BridgeException)?.code)
                 val bobNotes = bob.database("notes")
                 val ids = bobNotes.documents.list()
                 val noteId = ids.first { it != "settings_main" }
