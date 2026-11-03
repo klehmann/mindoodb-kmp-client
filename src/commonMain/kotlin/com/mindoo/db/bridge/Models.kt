@@ -133,7 +133,19 @@ data class QueryRow(
     val fields: JsonObject = JsonObject(emptyMap()),
     val lastModified: Long = 0,
     val textScore: Double? = null,
-)
+    /** Joined rows by include name (see `QueryBuilder.include`); null without includes. */
+    val includes: JsonObject? = null,
+) {
+    /** The related row of a `Cardinality.One` include, or null when nothing matched. */
+    fun included(name: String): QueryRow? =
+        includes?.get(name)?.takeIf { it !is JsonNull }?.let { rowJson.decodeFromJsonElement(serializer(), it) }
+
+    /** The related rows of a `Cardinality.Many` include. */
+    fun includedList(name: String): List<QueryRow> =
+        (includes?.get(name) as? kotlinx.serialization.json.JsonArray)?.map { rowJson.decodeFromJsonElement(serializer(), it) }.orEmpty()
+}
+
+private val rowJson = Json { ignoreUnknownKeys = true }
 
 @Serializable
 data class QueryResult(

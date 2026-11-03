@@ -206,19 +206,44 @@ do {
 Full-text search is a `text` clause on a query (`textScore` per row appears on
 matches).
 
-Query / view DSL (mirrors the MindooDB expression language):
+Query / view DSL: the complete MindooDB view language (`createViewLanguage()`), so any
+filter, sort key or column formula a TypeScript app writes with `v.…` can be written in Kotlin.
+Arguments typed `Any?` take an expression or a plain value (a literal).
+
+| Group | Functions |
+|---|---|
+| Values | `lit`, `str`, `num`, `bool`, `field("a.b")`, `value(column)`, `origin()`, `parent(field)` |
+| Document metadata | `docId()`, `parentDocId()`, `createdAt()`, `lastModifiedAt()`, `decryptionKeyId()`, `isWitnessed()`, `isAwaitingWitness()`, `attachmentNames()`, `attachmentLengths()`, `attachmentCount()` |
+| View counters | `childCount()`, `childCategoryCount()`, `childDocumentCount()`, `descendantCount()`, `descendantCategoryCount()`, `descendantDocumentCount()`, `siblingCount()` |
+| Arithmetic | `+ - * / %` on expressions, or `add`, `sub`, `mul`, `div`, `mod` |
+| Comparison, logic | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `and`, `or`, `not`, `allOf`, `anyOf` |
+| Text | `concat`, `lower`, `upper`, `trim`, `left`, `right`, `contains`, `startsWith`, `endsWith`, `pathJoin` |
+| Conversion, nulls | `asNumber`, `asString`, `asBoolean`, `coalesce`, `exists`, `notExists`, `datePart(x, DatePart.Year/Month/Day/Quarter)` |
+| Encrypted, JSON | `decryptField`, `decryptJson`, `json(field, path)` |
+| Branching | `ifElse(cond, a, cond2, b, default)`, `let("x" to expr) { it["x"] * 2 }` |
+| Anything newer | `rawExpr(json)` |
+
+Queries also take formula source text (`filterFormula = "v.eq(v.field(\"type\"), \"note\")"`), sort
+keys by expression (`sort(lower(field("name")))`), and joins: `include("customer", Cardinality.One)
+{ db = "crm"; localKey = "customerId" }` adds the related row (read it with `row.included("customer")`;
+`Cardinality.Many` + `row.includedList(…)`). Views take `categorizationStyle`, typed `sorting`/`totals`
+per column, and `sources` to span several databases (`ViewSource("crm", filter = …, origin = "crm")`).
+
 
 ```kotlin
 val q = mindooQuery {
-    filter = (field("type") eq "note") and (field("archived") neq true)
-    sort("title", SortDirection.ASCENDING)
+    filter = (field("type") eq "time") and (field("hours") * field("rate") gt 40)
+    sort(lower(field("employee")))
+    include("customer", Cardinality.One) { db = "crm"; localKey = "customer" }
     limit = 50
 }
+val label = let("h" to field("hours")) { ifElse(it["h"] gte 8, "full day", it["h"] gt 0, "part time", "off") }
 
 val view = viewDefinition {
-    filter = field("type") eq "note"
-    category("category", expression = field("category"))
-    column("title")
+    filter = field("type") eq "time"
+    category("bucket", expression = pathJoin(datePart(field("day"), DatePart.Year), field("employee")))
+    column("amount", field("hours") * field("rate"), totals = TotalMode.Sum, sorting = ColumnSorting.Descending)
+    column("label", label)
 }
 val nav = db.openViewNavigator(view, navigatorOptions = navigatorOptions(expandAll = true))
 val rows = nav.readForward(limit = 100)   // also: gotoFirst/Next/Parent/Pos…, expand…, select…, readSelected
