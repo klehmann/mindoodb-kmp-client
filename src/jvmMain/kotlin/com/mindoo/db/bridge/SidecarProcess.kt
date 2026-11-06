@@ -21,12 +21,35 @@ data class BridgeEndpoint(
     val bootstrapToken: String,
 )
 
-/** A running sidecar supervisor process. */
+/**
+ * A running sidecar supervisor process. It never outlives the JVM: a shutdown
+ * hook stops it on any regular exit (including `System.exit`, e.g. quitting
+ * from the macOS app menu), and the sidecar itself exits when its stdin closes,
+ * which also covers a crash or `kill -9` of the JVM.
+ */
 class SidecarProcess internal constructor(
     val process: Process,
     val endpoint: BridgeEndpoint,
 ) {
+    private val shutdownHook = Thread({ terminate() }, "mindoodb-sidecar-shutdown")
+
+    init {
+        Runtime.getRuntime().addShutdownHook(shutdownHook)
+    }
+
     fun stop() {
+        terminate()
+        try {
+            Runtime.getRuntime().removeShutdownHook(shutdownHook)
+        } catch (_: IllegalStateException) {
+            // the JVM is already shutting down
+        } catch (_: IllegalArgumentException) {
+            // stopped before
+        }
+    }
+
+    private fun terminate() {
+        if (!process.isAlive) return
         process.destroy()
         if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
             process.destroyForcibly()
@@ -59,6 +82,9 @@ object Sidecar {
         val builder = ProcessBuilder(nodeExecutable, entryScript.toAbsolutePath().toString())
         builder.environment()["MINDOODB_BRIDGE_DATA"] = dataRoot.toAbsolutePath().toString()
         builder.environment()["MINDOODB_BRIDGE_HANDSHAKE"] = handshakePath.toAbsolutePath().toString()
+        // The sidecar exits when our end of its stdin pipe closes (the JVM is gone).
+        builder.environment()["MINDOODB_BRIDGE_EXIT_WITH_PARENT"] = "1"
+        builder.redirectInput(ProcessBuilder.Redirect.PIPE)
         builder.redirectErrorStream(false)
         builder.redirectOutput(ProcessBuilder.Redirect.PIPE)
         builder.redirectError(ProcessBuilder.Redirect.INHERIT)
