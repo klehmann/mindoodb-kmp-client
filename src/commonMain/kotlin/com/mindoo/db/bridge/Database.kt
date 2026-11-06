@@ -21,6 +21,14 @@ import kotlinx.serialization.json.put
 class UpdateOpsBuilder {
     private val ops = mutableListOf<JsonObject>()
 
+    /** Add an operation as the bridge expects it (paths may hold list indices as numbers). */
+    internal fun raw(op: JsonObject) {
+        ops.add(op)
+    }
+
+    /** Whether no operation was added. */
+    val isEmpty: Boolean get() = ops.isEmpty()
+
     fun set(path: List<String>, value: Any?) {
         ops.add(buildJsonObject {
             put("op", "set")
@@ -162,8 +170,33 @@ class DocumentApi internal constructor(
     private val rpc: RpcClient,
     private val dbId: String,
 ) {
-    suspend fun get(docId: String): MindooDocument =
-        rpc.call(Methods.DOC_GET, params { put("db", dbId); put("docId", docId) })
+    /**
+     * Read a document. With [withFieldTypes] the result also tells atomic
+     * strings, rich text, counters and timestamps apart from plain values
+     * ([MindooDocument.fieldTypes]), which [applyEdit] needs.
+     */
+    suspend fun get(docId: String, withFieldTypes: Boolean = false): MindooDocument =
+        rpc.call(Methods.DOC_GET, params {
+            put("db", dbId)
+            put("docId", docId)
+            if (withFieldTypes) put("options", buildJsonObject { put("fieldTypes", true) })
+        })
+
+    /**
+     * Save an edited JSON copy of [original] as the smallest change: only what
+     * differs from `original.data` is written, as text splices for text, list
+     * inserts and deletes, increments for counters, and new values for the
+     * rest, all against `original.heads`. So edits made elsewhere in the
+     * meantime, even in the same text, merge instead of being overwritten.
+     * Fields starting with `_` are ignored. Load [original] with
+     * `get(id, withFieldTypes = true)`. Returns null when nothing changed.
+     */
+    suspend fun applyEdit(original: MindooDocument, edited: JsonObject): UpdateResult? {
+        val builder = UpdateOpsBuilder()
+        JsonEditDiff.diffInto(builder, original.data, edited, original.fieldTypes)
+        if (builder.isEmpty) return null
+        return update(original.id, original.heads, builder.build())
+    }
 
     suspend fun list(idPrefix: String? = null): List<String> =
         rpc.call<DocumentIdList>(Methods.DOC_LIST, params {

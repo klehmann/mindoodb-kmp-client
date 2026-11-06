@@ -110,6 +110,18 @@ class MindooDBSession internal constructor(
         }
     }
 
+    /** Whether this session syncs in the background (every 5 seconds while a server URL is set). */
+    suspend fun isBackgroundSyncEnabled(): Boolean =
+        rpc.call<BackgroundSyncState>(Methods.SESSION_GET_BACKGROUND_SYNC, params { }).enabled
+
+    /**
+     * Turn the background sync of this session on or off (on after `openSession`).
+     * Off, changes stay on this machine until [refresh] (or a publish or
+     * approval) syncs them; turning it on syncs right away. Not persisted.
+     */
+    suspend fun setBackgroundSync(enabled: Boolean): Boolean =
+        rpc.call<BackgroundSyncState>(Methods.SESSION_SET_BACKGROUND_SYNC, params { put("enabled", enabled) }).enabled
+
     // ----- KeyBag -----
 
     suspend fun createDocKey(keyId: String): CreateDocKeyResult =

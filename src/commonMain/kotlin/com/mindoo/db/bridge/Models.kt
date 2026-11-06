@@ -110,7 +110,17 @@ data class MindooDocument(
     val heads: List<String>,
     val attachments: List<AttachmentInfo> = emptyList(),
     val isDeleted: Boolean = false,
+    /**
+     * Only from `documents.get(id, withFieldTypes = true)`: the type of every
+     * value whose plain JSON hides it (`atomic`, `richText`, `counter`,
+     * `timestamp`, `bytes`), keyed by JSON Pointer such as `/items/0/status`.
+     * Strings not listed are collaborative text.
+     */
+    val fieldTypes: Map<String, String> = emptyMap(),
 )
+
+@Serializable
+data class BackgroundSyncState(val enabled: Boolean)
 
 @Serializable
 data class UpdateResult(

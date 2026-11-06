@@ -121,12 +121,14 @@ automatically.
 
 `refresh` syncs now (`SyncDirection.Both`/`Pull`/`Push`) and returns per-database
 counters (`pulledEntries`, `pushedEntries`, `rejectedEntries`). Without it a
-background loop syncs every 5 s once a server URL is set. Sync always covers
+background loop syncs every 5 s once a server URL is set;
+`setBackgroundSync(false)` turns it off for the session (handy to test
+concurrent edits), `isBackgroundSyncEnabled()` reads it. Sync always covers
 `directory` and `userdirectory` (grants, key wraps) plus every open local
 database, documents and attachments.
 
 ### Documents — `db.documents` (`DocumentApi`)
-`get`, `list(idPrefix?)`, `headCursor()`,
+`get(docId, withFieldTypes?)`, `applyEdit(original, edited)`, `list(idPrefix?)`, `headCursor()`,
 `create(initialValues?, id?, idPrefix?, decryptionKeyId?)`, `createMany`,
 `update(docId, baseHeads?) { … }`, `delete`, `deleteMany`, `listDeleted`,
 `undelete`, `history`, `getAtRevision(docId, timestamp)`.
@@ -149,6 +151,20 @@ db.documents.update(doc.id, baseHeads = doc.heads) {
     setText("body", "Collaborative text")
 }
 db.documents.update(doc.id) { increment("views") }
+```
+
+**Saving an edited JSON copy.** An editor that shows a document as JSON can save
+with `applyEdit(original, edited)`: `JsonEditDiff` compares the edited copy with
+`original.data` and writes only the difference, at `original.heads`, as text
+splices for text, list inserts/deletes, increments for counters and new values
+for the rest. Two people who edited the same version, even different words of
+one text or different keys of one nested object, both keep their edit. Load the
+original with `get(id, withFieldTypes = true)`, so atomic strings stay atomic.
+
+```kotlin
+val original = db.documents.get(id, withFieldTypes = true)
+val edited = Json.parseToJsonElement(editorText).jsonObject
+db.documents.applyEdit(original, edited)   // null when nothing changed
 ```
 
 **Rich text and marks.** `richText(path, spans)` writes a rich-text field
@@ -340,6 +356,10 @@ pnpm --filter mindoodb-jvm-bridge build   # produces dist/index.js and dist/prov
 isolated users, and exercises read/write, cross-session isolation, an attachment
 round-trip, the changefeed, and history. It skips gracefully if the sidecar
 `dist/` or `node` is unavailable.
+
+`JsonEditDiffTest` checks the operations `JsonEditDiff` emits (and replays random
+text and list edits); `JsonEditIntegrationTest` saves two edits of one version
+through the sidecar and checks that both survive, typed values included.
 
 `ServerSyncIntegrationTest` syncs two users of one tenant through a real MindooDB
 server (publish, join, documents, attachments, typed values, a live view). It

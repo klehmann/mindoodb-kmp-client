@@ -33,6 +33,8 @@ object Methods {
     const val TENANT_SET_LABEL = "tenant.setLabel"
     const val SESSION_WATCH_SYNC = "session.watchSync"
     const val SESSION_UNWATCH_SYNC = "session.unwatchSync"
+    const val SESSION_GET_BACKGROUND_SYNC = "session.getBackgroundSync"
+    const val SESSION_SET_BACKGROUND_SYNC = "session.setBackgroundSync"
 
     const val KEYBAG_CREATE_DOC_KEY = "keybag.createDocKey"
     const val KEYBAG_LIST_KEYS = "keybag.listKeys"
